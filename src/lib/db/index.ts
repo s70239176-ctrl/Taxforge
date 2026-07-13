@@ -1,14 +1,24 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { Redis } from "@upstash/redis";
 import type { ClassifiedTransaction, TaxReport } from "../tax/types";
+import { logEvent } from "../logging";
 
 /**
- * Storage interface TaxForge codes against. The demo ships a local JSON
- * file driver so `npm run dev` needs zero external services. Set
- * DB_DRIVER=supabase and implement the Supabase branch below (client
- * construction is intentionally left as the one integration point a team
- * would touch to go to production) to persist to Postgres instead — nothing
- * else in the app imports fs/paths directly.
+ * Storage interface TaxForge codes against.
+ *
+ * Two real implementations ship here:
+ *   - JsonFileStore    — zero-dependency local file store. Works for
+ *     `npm run dev`. Do NOT rely on this in production on Vercel: the
+ *     serverless filesystem is ephemeral outside /tmp, so writes vanish
+ *     between invocations/cold starts.
+ *   - UpstashRedisStore — real persistent storage via Upstash's REST API
+ *     (works from any serverless runtime, no persistent connection needed).
+ *     Selected automatically when UPSTASH_REDIS_REST_URL and
+ *     UPSTASH_REDIS_REST_TOKEN are set. Free tier is sufficient to go live.
+ *
+ * getStore() picks the right one at call time — nothing else in the app
+ * needs to know which is active.
  */
 export interface TaxForgeStore {
   getTransactions(walletAddress: string): Promise<ClassifiedTransaction[]>;
@@ -58,10 +68,60 @@ class JsonFileStore implements TaxForgeStore {
   }
 }
 
-// class SupabaseStore implements TaxForgeStore { ... }  // <- swap-in point for prod
+class UpstashRedisStore implements TaxForgeStore {
+  private redis: Redis;
+
+  constructor() {
+    this.redis = Redis.fromEnv();
+  }
+
+  private txKey(wallet: string) {
+    return `taxforge:transactions:${wallet.toLowerCase()}`;
+  }
+  private reportsKey(wallet: string) {
+    return `taxforge:reports:${wallet.toLowerCase()}`;
+  }
+
+  async getTransactions(walletAddress: string): Promise<ClassifiedTransaction[]> {
+    const data = await this.redis.get<ClassifiedTransaction[]>(this.txKey(walletAddress));
+    return data ?? [];
+  }
+
+  async saveTransactions(walletAddress: string, txs: ClassifiedTransaction[]): Promise<void> {
+    await this.redis.set(this.txKey(walletAddress), txs);
+  }
+
+  async getReports(walletAddress: string): Promise<TaxReport[]> {
+    const data = await this.redis.get<TaxReport[]>(this.reportsKey(walletAddress));
+    return data ?? [];
+  }
+
+  async saveReport(report: TaxReport): Promise<void> {
+    const key = this.reportsKey(report.walletAddress);
+    const existing = (await this.redis.get<TaxReport[]>(key)) ?? [];
+    const next = [...existing.filter((r) => r.id !== report.id), report];
+    await this.redis.set(key, next);
+  }
+}
 
 let store: TaxForgeStore | null = null;
+let loggedBackend = false;
+
 export function getStore(): TaxForgeStore {
-  if (!store) store = new JsonFileStore();
+  if (!store) {
+    const hasUpstash = !!process.env.UPSTASH_REDIS_REST_URL && !!process.env.UPSTASH_REDIS_REST_TOKEN;
+    store = hasUpstash ? new UpstashRedisStore() : new JsonFileStore();
+    if (!loggedBackend) {
+      loggedBackend = true;
+      logEvent({
+        level: hasUpstash ? "info" : "warn",
+        event: "storage_backend_selected",
+        backend: hasUpstash ? "upstash-redis" : "json-file",
+        message: hasUpstash
+          ? undefined
+          : "Using local JSON file storage — this does NOT persist reliably on Vercel serverless. Set UPSTASH_REDIS_REST_URL/TOKEN before going live.",
+      });
+    }
+  }
   return store;
 }

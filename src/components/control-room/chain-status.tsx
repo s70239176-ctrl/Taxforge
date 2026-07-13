@@ -6,9 +6,9 @@ const CHAINS = [
 ] as const;
 
 const HEALTH_DOT: Record<string, string> = {
-  gain: "bg-gain shadow-[0_0_0_2px_theme(colors.gain-dim)]",
-  pending: "bg-pending shadow-[0_0_0_2px_theme(colors.pending-dim)]",
-  loss: "bg-loss shadow-[0_0_0_2px_theme(colors.loss-dim)]",
+  gain: "bg-gain shadow-[0_0_0_2px_rgb(var(--color-gain-dim))]",
+  pending: "bg-pending shadow-[0_0_0_2px_rgb(var(--color-pending-dim))]",
+  loss: "bg-loss shadow-[0_0_0_2px_rgb(var(--color-loss-dim))]",
 };
 
 export function ChainStatus() {

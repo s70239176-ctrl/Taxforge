@@ -1,3 +1,5 @@
+import { ThemeToggle } from "./theme-toggle";
+
 const TICKER_ITEMS = [
   "X LAYER  BLOCK #4,812,940  ·  12s",
   "ETHEREUM  BLOCK #21,004,118  ·  11s",
@@ -36,9 +38,12 @@ export function Masthead() {
           <div className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-void to-transparent" />
         </div>
 
-        <div className="flex items-center gap-2 text-2xs font-mono text-ink-muted">
-          <span className="hidden sm:inline">JURISDICTION</span>
-          <span className="rounded-sm border border-line bg-panel-raised px-1.5 py-0.5 text-ink">US</span>
+        <div className="flex items-center gap-3 text-2xs font-mono text-ink-muted">
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline">JURISDICTION</span>
+            <span className="rounded-sm border border-line bg-panel-raised px-1.5 py-0.5 text-ink">US</span>
+          </div>
+          <ThemeToggle />
         </div>
       </div>
     </header>

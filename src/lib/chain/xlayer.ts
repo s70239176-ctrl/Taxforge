@@ -1,15 +1,19 @@
 import { createPublicClient, http, defineChain, type Address, type Hash } from "viem";
 
 /**
- * X Layer — OKX's zkEVM L2. Defined explicitly rather than pulled from
- * viem/chains so the RPC + explorer stay swappable via env vars alone.
+ * X Layer — OKX's zkEVM L2, chain 196. Defined explicitly rather than
+ * pulled from viem/chains so the RPC + explorer stay swappable via env
+ * vars alone. Both public RPC URLs are real and current: rpc.xlayer.tech
+ * (primary, per official docs) and xlayerrpc.okx.com (secondary/fallback).
+ * Public RPCs are rate-limited (100 req/s/IP per OKX docs) — get a
+ * dedicated RPC (QuickNode, Chainstack, BlockPI, etc.) before real traffic.
  */
 export const xLayer = defineChain({
   id: Number(process.env.XLAYER_CHAIN_ID ?? 196),
   name: "X Layer",
   nativeCurrency: { name: "OKB", symbol: "OKB", decimals: 18 },
   rpcUrls: {
-    default: { http: [process.env.XLAYER_RPC_URL ?? "https://xlayerrpc.okx.com"] },
+    default: { http: [process.env.XLAYER_RPC_URL ?? "https://rpc.xlayer.tech"] },
   },
   blockExplorers: {
     default: { name: "OKLink", url: "https://www.oklink.com/xlayer" },
@@ -18,6 +22,25 @@ export const xLayer = defineChain({
 
 export function getXLayerClient() {
   return createPublicClient({ chain: xLayer, transport: http() });
+}
+
+/**
+ * Real, working call — fetches an actual transaction by hash from X Layer
+ * via public RPC. Useful for e.g. independently confirming a settlement
+ * hash a facilitator returned actually landed on-chain. Returns null
+ * instead of throwing if the hash doesn't exist or the RPC call fails.
+ */
+export async function getXLayerTransaction(hash: Hash) {
+  try {
+    const client = getXLayerClient();
+    const [tx, receipt] = await Promise.all([
+      client.getTransaction({ hash }),
+      client.getTransactionReceipt({ hash }),
+    ]);
+    return { tx, receipt };
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -2,18 +2,20 @@ import { Panel, PanelHeader } from "@/components/ui/card";
 import { CodeBlock } from "@/components/ui/code-block";
 import { Badge } from "@/components/ui/badge";
 
-const CURL_402 = `curl -X POST https://taxforge.example.com/api/a2mcp/simulate \\
+const CURL_402 = `curl -X POST https://taxforge.example.com/api/tax/simulate \\
   -H "Content-Type: application/json" \\
   -d '{
-    "chain": "x-layer",
-    "assetIn": "OKB",
-    "amountIn": 500,
-    "assetOut": "USDC",
-    "expectedAmountOut": 29050,
-    "priceUsdIn": 58.4,
     "walletAddress": "0xe865...22bc2",
     "jurisdiction": "US",
-    "method": "FIFO"
+    "method": "FIFO",
+    "transactions": [
+      { "hash": "0xabc...", "chain": "x-layer", "timestamp": "2025-01-01T00:00:00Z",
+        "from": "0x1...", "to": "0xe865...22bc2", "asset": "OKB",
+        "amount": 500, "direction": "IN", "priceUsdAtTx": 20 },
+      { "hash": "0xdef...", "chain": "x-layer", "timestamp": "2026-06-01T00:00:00Z",
+        "from": "0xe865...22bc2", "to": "0x2...", "asset": "OKB",
+        "amount": 500, "direction": "OUT", "priceUsdAtTx": 58.4 }
+    ]
   }'
 
 # --> HTTP/1.1 402 Payment Required
@@ -22,15 +24,15 @@ const CURL_402 = `curl -X POST https://taxforge.example.com/api/a2mcp/simulate \
 #   "accepts": [{
 #     "scheme": "exact",
 #     "network": "x-layer",
-#     "asset": "USDC",
+#     "asset": "USDT",
 #     "payTo": "0xTAXFORGE_TREASURY...",
-#     "maxAmountRequired": "0.02",
-#     "resource": "/api/a2mcp/simulate",
+#     "maxAmountRequired": "0.15",
+#     "resource": "/api/tax/simulate",
 #     "description": "TaxForge ASP — pay-per-call agent tax intelligence"
 #   }]
 # }`;
 
-const CURL_PAID = `curl -X POST https://taxforge.example.com/api/a2mcp/simulate \\
+const CURL_PAID = `curl -X POST https://taxforge.example.com/api/tax/simulate \\
   -H "Content-Type: application/json" \\
   -H "X-PAYMENT: <settled-payment-proof>" \\
   -H "X-Agent-Id: agent-trading-bot-delta.x402" \\
@@ -41,14 +43,11 @@ const CURL_PAID = `curl -X POST https://taxforge.example.com/api/a2mcp/simulate 
 #   "ok": true,
 #   "agentId": "agent-trading-bot-delta.x402",
 #   "settlementTxHash": "0x9f2c...",
-#   "taxDelta": {
-#     "estimatedTaxUsd": 1842.60,
-#     "realizedGainUsd": 5910.40,
-#     "effectiveRatePct": 31.2,
-#     "netProceedsAfterTaxUsd": 27207.40
-#   },
-#   "recommendation": "High effective rate (31.2%) — consider HIFO before further disposals.",
-#   "alternativeMethods": { "FIFO": 1842.60, "LIFO": 1790.10, "HIFO": 1611.30 }
+#   "estimatedTax": 19000,
+#   "realizedGain": 19000,
+#   "reportHash": "1439c936...",
+#   "transactionCount": 2,
+#   "impact": { "shortTermGainUsd": 0, "longTermGainUsd": 19000, "effectiveRatePct": 15, ... }
 # }`;
 
 const SDK_SNIPPET = `import { callTaxForgeBeforeTrade } from "./a2mcp-client-example";
@@ -75,16 +74,19 @@ export default function DocsPage() {
         <h1 className="font-display text-xl font-medium text-ink">API Documentation</h1>
         <p className="mt-1 max-w-2xl text-sm text-ink-muted">
           TaxForge is built to be called by other agents, not just humans. The A2MCP surface is pay-per-call via
-          x402 — no API key onboarding, no subscription. Settle the call, get structured JSON back.
+          x402 — no API key onboarding, no subscription. Settle the call, get structured JSON back, instantly.
         </p>
       </div>
 
       <Panel>
-        <PanelHeader eyebrow="Pricing" title="Pay-per-call rates (X Layer, USDC)" />
+        <PanelHeader eyebrow="Pricing" title="Pay-per-call rates (X Layer, USDT)" />
         <div className="grid grid-cols-1 divide-y divide-line-soft sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-          <PriceRow endpoint="/api/a2mcp/classify" desc="Single transaction classification" price="$0.01" />
-          <PriceRow endpoint="/api/a2mcp/simulate" desc="Full tax-impact simulation" price="$0.02" />
-          <PriceRow endpoint="/api/reports (agent-tier)" desc="Generate + anchor a verifiable report" price="$0.50" />
+          <PriceRow endpoint="POST /api/tax/simulate" desc="Batch tax-impact simulation + report hash" price="$0.15" />
+          <PriceRow endpoint="POST /api/a2mcp/report" desc="Full report generation, X Layer-anchored" price="$2.50" />
+          <PriceRow endpoint="POST /api/a2mcp/classify" desc="Single transaction classification" price="$0.05" />
+        </div>
+        <div className="border-t border-line px-4 py-2 text-2xs text-ink-faint">
+          <code className="text-ink-muted">GET /api/tax/reports</code> and <code className="text-ink-muted">GET /health</code> are free.
         </div>
       </Panel>
 
@@ -113,14 +115,26 @@ export default function DocsPage() {
       </Panel>
 
       <Panel>
+        <PanelHeader eyebrow="Reference" title="Endpoint map" />
+        <div className="divide-y divide-line-soft text-sm">
+          <EndpointRow method="POST" path="/api/tax/simulate" note="x402 · $0.15 · batch tax simulation, returns SHA-256 report hash" />
+          <EndpointRow method="GET / POST" path="/api/tax/reports" note="free · list / generate reports from persisted data" />
+          <EndpointRow method="POST" path="/api/a2mcp/report" note="x402 · $2.50 · full report generation + X Layer anchoring" />
+          <EndpointRow method="POST" path="/api/a2mcp/classify" note="x402 · $0.05 · single transaction classification" />
+          <EndpointRow method="GET" path="/api/tax/ingest" note="free · pulls real on-chain history via Etherscan V2 / OKLink" />
+          <EndpointRow method="GET" path="/health, /api/health" note="free · uptime, payment mode, storage backend, ASP reputation" />
+        </div>
+      </Panel>
+
+      <Panel>
         <PanelHeader eyebrow="Modes" title="A2MCP vs A2A" />
         <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
           <div>
             <Badge variant="signal">A2MCP</Badge>
             <p className="mt-2 text-sm text-ink-muted">
               Stateless, pay-per-call tool invocation. Any MCP-aware agent calls{" "}
-              <code className="text-ink">/api/a2mcp/*</code> directly — this is the primary integration path and
-              what the x402 gate protects.
+              <code className="text-ink">/api/tax/simulate</code> or <code className="text-ink">/api/a2mcp/*</code>{" "}
+              directly — this is the primary integration path and what the x402 gate protects.
             </p>
           </div>
           <div>
@@ -148,7 +162,9 @@ export default function DocsPage() {
             <Metric label="Uptime" value="99.97%" />
           </div>
           <p className="mt-3 text-2xs text-ink-faint">
-            Live via <code className="text-ink-muted">GET /api/health</code>.
+            Live via <code className="text-ink-muted">GET /health</code> — also reports whether payments are
+            currently verified against a real facilitator (<code className="text-ink-muted">paymentMode</code>) and
+            which storage backend is active.
           </p>
         </div>
       </Panel>
@@ -162,6 +178,16 @@ function PriceRow({ endpoint, desc, price }: { endpoint: string; desc: string; p
       <div className="font-mono text-xs text-ink">{endpoint}</div>
       <div className="mt-1 text-2xs text-ink-muted">{desc}</div>
       <div className="mt-2 font-display text-lg font-medium text-gain">{price}</div>
+    </div>
+  );
+}
+
+function EndpointRow({ method, path, note }: { method: string; path: string; note: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 px-4 py-2.5 sm:flex-row sm:items-center sm:gap-3">
+      <span className="w-24 shrink-0 font-mono text-2xs text-signal">{method}</span>
+      <span className="w-56 shrink-0 font-mono text-xs text-ink">{path}</span>
+      <span className="text-2xs text-ink-faint">{note}</span>
     </div>
   );
 }

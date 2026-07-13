@@ -2,18 +2,67 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Two real themes, not a dark-mode-as-afterthought. Light is the default
+ * (per product direction) — same institutional "control room" aesthetic in
+ * both: hairline borders, no gradients, muted (not neon) gain/loss accents.
+ * Toggled by adding/removing `.dark` on <html> — see components/layout/theme-toggle.tsx.
+ *
+ * Values are space-separated RGB channels (not hex) so Tailwind's opacity
+ * modifiers (bg-signal/20, border-gain/30, etc.) work — see tailwind.config.ts,
+ * which wraps these in rgb(var(--color-x) / <alpha-value>).
+ */
+:root {
+  --color-void: 247 246 243;
+  --color-panel: 255 255 255;
+  --color-panel-raised: 240 238 233;
+  --color-line: 222 218 209;
+  --color-line-soft: 233 230 223;
+  --color-ink: 26 27 30;
+  --color-ink-muted: 91 95 102;
+  --color-ink-faint: 147 150 156;
+  --color-gain: 21 128 79;
+  --color-gain-dim: 227 243 236;
+  --color-loss: 176 58 50;
+  --color-loss-dim: 248 232 230;
+  --color-pending: 140 106 10;
+  --color-pending-dim: 245 238 218;
+  --color-signal: 51 86 125;
+  --color-signal-dim: 228 235 243;
+}
+
+.dark {
+  --color-void: 10 11 13;
+  --color-panel: 18 20 26;
+  --color-panel-raised: 22 24 31;
+  --color-line: 34 38 47;
+  --color-line-soft: 26 29 36;
+  --color-ink: 231 233 236;
+  --color-ink-muted: 124 132 147;
+  --color-ink-faint: 75 81 96;
+  --color-gain: 31 174 110;
+  --color-gain-dim: 18 61 43;
+  --color-loss: 196 67 61;
+  --color-loss-dim: 61 24 23;
+  --color-pending: 184 145 47;
+  --color-pending-dim: 51 39 8;
+  --color-signal: 74 111 165;
+  --color-signal-dim: 22 35 58;
+}
+
 @layer base {
   * {
     @apply border-line;
   }
-  html {
-    color-scheme: dark;
-  }
   body {
     @apply bg-void text-ink font-body antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    transition: background-color 150ms ease, color 150ms ease;
   }
   ::selection {
+    @apply bg-signal/20 text-ink;
+  }
+  .dark ::selection {
     @apply bg-signal/40 text-ink;
   }
   ::-webkit-scrollbar {
@@ -30,7 +79,7 @@
     @apply bg-ink-faint;
   }
   :focus-visible {
-    outline: 1.5px solid theme("colors.signal");
+    outline: 1.5px solid rgb(var(--color-signal));
     outline-offset: 2px;
   }
 }
@@ -47,6 +96,9 @@
   }
   .panel {
     @apply bg-panel hairline;
+    box-shadow: inset 0 1px 0 0 rgba(0, 0, 0, 0.03);
+  }
+  .dark .panel {
     box-shadow: inset 0 1px 0 0 rgba(231, 233, 236, 0.04);
   }
   .label-eyebrow {
@@ -54,7 +106,7 @@
   }
   .live-dot {
     @apply inline-block h-1.5 w-1.5 rounded-full bg-gain;
-    box-shadow: 0 0 0 2px theme("colors.gain-dim");
+    box-shadow: 0 0 0 2px rgb(var(--color-gain-dim));
   }
 }
 

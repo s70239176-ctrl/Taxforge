@@ -27,31 +27,35 @@ that surface is expected to evolve.
 
    | Resource | Method | Price | Description |
    |---|---|---|---|
-   | `/api/a2mcp/simulate` | POST | 0.02 USDC | Pre-trade tax-impact simulation |
-   | `/api/a2mcp/classify` | POST | 0.01 USDC | Single-transaction classification |
+   | `/api/tax/simulate` | POST | 0.15 USDT | Batch tax-impact simulation — accepts a transaction array, returns tax delta + SHA-256 report hash |
+   | `/api/a2mcp/report` | POST | 2.50 USDT | Full report generation, X Layer-anchored |
+   | `/api/a2mcp/classify` | POST | 0.05 USDT | Single transaction classification |
 
-   These should match `X402_PRICE_SIMULATE` / `X402_PRICE_CLASSIFY` in your deployed environment —
-   Onchain OS's discovery layer surfaces the price to calling agents up front, so keep the console
-   and the live `X402Requirements` response in sync.
+   These should match `X402_PRICE_SIMULATE` / `X402_PRICE_REPORT` / `X402_PRICE_CLASSIFY` in your deployed
+   environment — Onchain OS's discovery layer surfaces the price to calling agents up front, so keep the console
+   and the live `X402Requirements` response in sync. `GET /api/tax/reports` and `GET /health` stay free.
 
 4. **Payment configuration**
    - Network: `x-layer`
-   - Asset: `USDC`
+   - Asset: `USDT` (or whatever you set `X402_ASSET` to)
    - `payTo`: your `X402_RECEIVING_ADDRESS`
-   - Facilitator: point at the OKX x402 facilitator (`X402_FACILITATOR_URL`) once assigned one at
-     registration time.
+   - Facilitator: Onchain OS assigns a facilitator URL during registration — set it as
+     `X402_FACILITATOR_URL` in your deployment and redeploy. **Until this is set, the app runs in
+     demo mode and does not actually verify payments** (see `src/lib/x402/facilitator.ts` and the
+     `paymentMode` field in `GET /health`) — do not accept live marketplace traffic before this step.
 
-5. **Health / reputation hook** — point Onchain OS's uptime monitor at `GET /api/health`. This is
-   also where TaxForge's own `callsServed` / `disputesRaised` / `uptimePct` counters live, so the
-   registry can pull TaxForge's own reputation signal the same way it would for any other ASP.
+5. **Health / reputation hook** — point Onchain OS's uptime monitor at `GET /health` (or
+   `GET /api/health`, identical). This is also where TaxForge's own `callsServed` /
+   `disputesRaised` / `uptimePct` counters live, plus `paymentMode` (`"live"` vs `"demo"`) and
+   `storageBackend` — check both read `"live"` / `"upstash-redis"` before going live.
 
-6. **MCP manifest (if the console asks for one)** — describe the two tools as:
-   - `taxforge.simulate_tax_impact(chain, assetIn, amountIn, assetOut, expectedAmountOut, priceUsdIn, walletAddress, jurisdiction, method)`
-   - `taxforge.classify_transaction(hash, chain, ..., counterpartyAgentId?, memo?)`
+6. **MCP manifest (if the console asks for one)** — describe the tools as:
+   - `taxforge.simulate_tax(transactions[], walletAddress, jurisdiction, method)` → `/api/tax/simulate`
+   - `taxforge.generate_report(walletAddress, periodStart, periodEnd, jurisdiction, method, anchor)` → `/api/a2mcp/report`
+   - `taxforge.classify_transaction(hash, chain, ..., counterpartyAgentId?, memo?)` → `/api/a2mcp/classify`
 
-   matching the Zod schemas in `src/app/api/a2mcp/simulate/route.ts` and
-   `src/app/api/a2mcp/classify/route.ts` — keep the manifest and the actual `zod` schema in lockstep
-   if you change one.
+   matching the Zod schemas in each route file — keep the manifest and the actual `zod` schema in
+   lockstep if you change one.
 
 7. **Submit for listing.** Once approved, TaxForge becomes discoverable to any agent browsing the
    Onchain OS ASP directory, and can start accruing the reputation signals shown in the in-app

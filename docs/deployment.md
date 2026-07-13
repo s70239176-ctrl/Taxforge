@@ -28,7 +28,7 @@ Notes:
 - `pdfkit`/`fontkit` are marked as `serverExternalPackages` in `next.config.mjs` — required for PDF
   generation to work under Vercel's serverless bundling. Don't remove that config.
 
-## Option B — Railway (if you want a persistent filesystem / long-running process)
+## Option B — Railway or Render (if you want a persistent filesystem / long-running process)
 
 ```bash
 railway login
@@ -36,10 +36,12 @@ railway init
 railway up
 ```
 
-Set the same environment variables as above via `railway variables set KEY=value` or the
-dashboard. Railway gives you a persistent container filesystem, so the JSON-file store actually
-persists across requests here without needing Supabase — a good middle ground for a hackathon
-deployment that needs to survive a few days of demoing.
+Render works the same way via its dashboard (New → Web Service → connect this repo, build
+command `npm run build`, start command `npm run start`). Set the same environment variables as
+above via the dashboard or CLI. Both give you a persistent container filesystem, so the JSON-file
+store actually persists across requests here without needing Upstash — a reasonable middle ground
+for early testing, though Upstash Redis remains the recommended path once you're accepting real
+paid calls, since it works identically whether you're on Vercel, Railway, or Render.
 
 ## Option C — Vercel (frontend + API) + Railway (nothing else needed)
 

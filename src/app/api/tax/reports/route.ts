@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getStore } from "@/lib/db";
 import { buildReport, anchorReport } from "@/lib/reports/generate";
 import { computePortfolioImpact } from "@/lib/reports/portfolio-impact";
+import { logEvent } from "@/lib/logging";
 
 export const runtime = "nodejs";
 
@@ -16,19 +17,30 @@ const GenerateSchema = z.object({
 });
 
 /**
- * Free, session-authenticated report generation backing the in-app Report
- * Generator. The metered/paid version of this same logic is exposed at
- * /api/a2mcp/report for agent-to-agent calls (see that route for the x402
- * gate — both routes call the identical computePortfolioImpact + buildReport
- * pipeline, so numbers never diverge between the human and agent surfaces).
+ * GET /api/tax/reports?wallet=0x... — lists every report generated for a
+ * wallet/agent. This is the canonical path for OKX.AI review and for
+ * agents/users listing their own report history; /api/reports (no /tax/
+ * prefix) remains as a backward-compatible alias used by the in-app
+ * dashboard.
  */
 export async function GET(req: NextRequest) {
-  const wallet = req.nextUrl.searchParams.get("wallet") ?? "0xe8651e5faf1cfeabd196f3f8998d2da8b8b22bc2";
+  const wallet = req.nextUrl.searchParams.get("wallet");
+  if (!wallet) {
+    return NextResponse.json({ error: "invalid_request", message: "Missing required ?wallet= query param." }, { status: 400 });
+  }
   const store = getStore();
   const reports = await store.getReports(wallet);
+  logEvent({ level: "info", event: "tax_reports_listed", wallet, count: reports.length });
   return NextResponse.json({ wallet, reports });
 }
 
+/**
+ * POST /api/tax/reports — generates (and optionally anchors) a report from
+ * whatever's already been persisted for this wallet (via /api/tax/simulate
+ * or the dashboard). Free/session-based, matching /api/reports; the
+ * x402-metered version for pure agent-to-agent calls lives at
+ * /api/a2mcp/report.
+ */
 export async function POST(req: NextRequest) {
   const json = await req.json().catch(() => null);
   const parsed = GenerateSchema.safeParse(json);
@@ -56,7 +68,8 @@ export async function POST(req: NextRequest) {
   });
 
   report = anchor ? await anchorReport(report) : { ...report, status: "FINAL" };
-
   await store.saveReport(report);
+
+  logEvent({ level: "info", event: "tax_report_generated", walletAddress, reportId: report.id, anchored: anchor });
   return NextResponse.json({ report, impact });
 }
