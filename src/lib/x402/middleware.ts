@@ -1,35 +1,52 @@
 import { NextRequest, NextResponse } from "next/server";
 import { mockOkxPaymentAdapter } from "../chain/xlayer";
 import { isFacilitatorConfigured, verifyWithFacilitator, settleWithFacilitator } from "./facilitator";
+import { toAtomicUnits } from "./units";
 import { logEvent } from "../logging";
 
 /**
- * Implementation of the x402 pattern (HTTP 402 "Payment Required" +
- * a machine-readable payment-requirements body) as used for TaxForge's
- * A2MCP endpoint. Any calling agent that omits the X-PAYMENT header gets a
- * 402 back describing exactly how to pay — no account, no API key
- * onboarding flow, just settle the call and retry.
+ * Implementation of OKX's real Agent Payments Protocol / x402
+ * "accepts-based" flow, corrected against the actual spec shipped in
+ * okx/onchainos-skills (okx-agent-payments-protocol, v4.2.3) — installed
+ * and read directly rather than assumed from the generic public x402 docs.
  *
- * Two modes, chosen automatically based on env:
+ * Two real corrections that came from reading the actual skill file:
+ *   1. The v2 challenge is a base64-encoded JSON `PAYMENT-REQUIRED`
+ *      *response header*, not just a JSON body (the JSON body remains as a
+ *      v1-legacy/human-debuggable fallback — real OKX agents check the
+ *      header first, per their own Step A2 priority order).
+ *   2. Amounts are atomic/minimal units (e.g. "150000" for 0.15 of a
+ *      6-decimal token), not decimal strings — real agents decode
+ *      `option.amount` and convert using token decimals for display.
+ *   3. The client's payment-proof header is `PAYMENT-SIGNATURE` for this
+ *      v2 accepts-based flow; `X-PAYMENT` is the v1-legacy header name.
+ *      We accept either, preferring PAYMENT-SIGNATURE.
+ *
+ * Two runtime modes, chosen automatically based on env:
  *   - REAL mode: X402_FACILITATOR_URL is set → payments are verified and
- *     settled against a real x402 facilitator (see src/lib/x402/facilitator.ts).
- *     This is the mode required before going live on OKX.AI.
+ *     settled against a real x402-compliant facilitator (see facilitator.ts).
+ *     Required before going live on OKX.AI.
  *   - DEMO mode: no facilitator configured → falls back to the local mock
  *     adapter. Fine for local dev; NEVER acceptable for a listed, callable
- *     ASP, since it does not actually verify anyone paid you. A warning is
- *     logged on every call made in this mode.
+ *     ASP. A warning is logged on every call made in this mode.
  */
+
+const ASSET_DECIMALS = Number(process.env.X402_ASSET_DECIMALS ?? 6); // 6 is correct for USDT/USDC on most EVM chains
+
+export interface X402AcceptEntry {
+  scheme: "exact";
+  network: string;
+  asset: string;
+  payTo: string;
+  amount: string; // atomic units — the field real OKX agents parse (option.amount)
+  maxAmountRequired: string; // decimal string — kept for v1/back-compat and human debugging
+  resource: string;
+  description: string;
+}
+
 export interface X402Requirements {
   x402Version: 1;
-  accepts: Array<{
-    scheme: "exact";
-    network: string;
-    asset: string;
-    payTo: string;
-    maxAmountRequired: string; // decimal string, e.g. "0.15"
-    resource: string;
-    description: string;
-  }>;
+  accepts: X402AcceptEntry[];
 }
 
 export function buildRequirements(resource: string, priceUsd: string): X402Requirements {
@@ -41,12 +58,24 @@ export function buildRequirements(resource: string, priceUsd: string): X402Requi
         network: process.env.X402_NETWORK ?? "x-layer",
         asset: process.env.X402_ASSET ?? "USDT",
         payTo: process.env.X402_RECEIVING_ADDRESS ?? "0x0000000000000000000000000000000000000000",
+        amount: toAtomicUnits(priceUsd, ASSET_DECIMALS),
         maxAmountRequired: priceUsd,
         resource,
         description: "TaxForge ASP — pay-per-call agent tax intelligence",
       },
     ],
   };
+}
+
+/** Base64-encodes the requirements for the real v2 `PAYMENT-REQUIRED` response header. */
+function encodeChallenge(requirements: X402Requirements): string {
+  return Buffer.from(JSON.stringify(requirements), "utf8").toString("base64");
+}
+
+function jsonWith402Header(body: unknown, requirements: X402Requirements): NextResponse {
+  const res = NextResponse.json(body, { status: 402 });
+  res.headers.set("PAYMENT-REQUIRED", encodeChallenge(requirements));
+  return res;
 }
 
 export interface X402VerifyResult {
@@ -68,7 +97,9 @@ export async function requirePayment(
   resource: string,
   priceUsd: string
 ): Promise<X402VerifyResult> {
-  const paymentHeader = req.headers.get("X-PAYMENT");
+  // Real OKX agents send the v2 proof as PAYMENT-SIGNATURE; X-PAYMENT is the
+  // v1-legacy name. Accept either, preferring the current one.
+  const paymentHeader = req.headers.get("PAYMENT-SIGNATURE") ?? req.headers.get("X-PAYMENT");
   const requirements = buildRequirements(resource, priceUsd);
   const accept = requirements.accepts[0]!; // buildRequirements always returns exactly one entry
   const realMode = isFacilitatorConfigured();
@@ -78,10 +109,7 @@ export async function requirePayment(
   }
 
   if (!paymentHeader) {
-    return {
-      ok: false,
-      response: NextResponse.json(requirements, { status: 402 }),
-    };
+    return { ok: false, response: jsonWith402Header(requirements, requirements) };
   }
 
   if (realMode) {
@@ -89,9 +117,9 @@ export async function requirePayment(
     if (!verification.valid) {
       return {
         ok: false,
-        response: NextResponse.json(
+        response: jsonWith402Header(
           { ...requirements, error: "payment_invalid", message: verification.reason ?? "Payment verification failed." },
-          { status: 402 }
+          requirements
         ),
       };
     }
@@ -99,9 +127,9 @@ export async function requirePayment(
     if (!settlement.success) {
       return {
         ok: false,
-        response: NextResponse.json(
+        response: jsonWith402Header(
           { ...requirements, error: "settlement_failed", message: settlement.error ?? "Payment settlement failed." },
-          { status: 402 }
+          requirements
         ),
       };
     }
@@ -118,9 +146,9 @@ export async function requirePayment(
   if (!verification.valid) {
     return {
       ok: false,
-      response: NextResponse.json(
-        { ...requirements, error: "payment_invalid", message: "X-PAYMENT proof failed verification (demo mode)." },
-        { status: 402 }
+      response: jsonWith402Header(
+        { ...requirements, error: "payment_invalid", message: "Payment proof failed verification (demo mode)." },
+        requirements
       ),
     };
   }

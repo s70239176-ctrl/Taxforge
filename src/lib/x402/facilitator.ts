@@ -27,7 +27,8 @@ export interface PaymentRequirementsEntry {
   network: string;
   asset: string;
   payTo: string;
-  maxAmountRequired: string;
+  amount: string; // atomic units — real OKX v2 field
+  maxAmountRequired: string; // decimal string — v1/back-compat
   resource: string;
   description: string;
 }
