@@ -113,11 +113,12 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const priceUsd = process.env.X402_PRICE_SIMULATE ?? "0.15";
+  const gate = await requirePayment(req, "/api/tax/simulate", priceUsd);
+  if (!gate.ok) return gate.response!;
   return NextResponse.json({
-    service: "TaxForge — /api/tax/simulate",
-    description: "POST an array of transactions to get a real, instant tax-impact readout and report hash.",
-    pricing: { asset: process.env.X402_ASSET ?? "USDT", pricePerCall: process.env.X402_PRICE_SIMULATE ?? "0.15" },
-    docs: "/docs",
+    ok: true,
+    message: "Payment verified. This endpoint expects POST with a transaction array — see /docs.",
   });
 }
