@@ -94,6 +94,15 @@ export async function checkRateLimitAsync(key: string): Promise<RateLimitResult>
   }
   if (!hasUpstash) return checkInMemory(key);
 
-  const { success, remaining, reset, limit } = await getUpstashLimiter().limit(key);
-  return { allowed: success, remaining, resetAtMs: reset, limit };
+  // Rate limiting is a protective measure, not the thing the customer paid
+  // for — a Redis/Upstash hiccup here must never take down an otherwise
+  // healthy, payable request. Fail open (allow) and fall back to the
+  // in-memory limiter for this call if Upstash errors.
+  try {
+    const { success, remaining, reset, limit } = await getUpstashLimiter().limit(key);
+    return { allowed: success, remaining, resetAtMs: reset, limit };
+  } catch (err) {
+    logEvent({ level: "error", event: "rate_limit_upstash_error", key, message: err instanceof Error ? err.message : String(err) });
+    return checkInMemory(key);
+  }
 }
