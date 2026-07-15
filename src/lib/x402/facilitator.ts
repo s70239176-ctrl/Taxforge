@@ -31,6 +31,7 @@ export interface PaymentRequirementsEntry {
   maxAmountRequired: string; // decimal string — v1/back-compat
   resource: string;
   description: string;
+  extra?: { name: string; symbol: string; decimals: number };
 }
 
 interface FacilitatorVerifyResponse {

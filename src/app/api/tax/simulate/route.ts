@@ -74,45 +74,66 @@ export async function POST(req: NextRequest) {
   }
   const { transactions, walletAddress, jurisdiction, method, persist } = parsed.data;
 
+  let result;
   try {
-    const result = await calculateTax(transactions, { jurisdiction, method });
+    result = await calculateTax(transactions, { jurisdiction, method });
+  } catch (err) {
+    // This is the one failure that should actually fail the call — the
+    // customer paid for a tax calculation and we couldn't produce one.
+    logEvent({ level: "error", event: "tax_simulate_calculation_error", agentId, message: err instanceof Error ? err.message : String(err) });
+    return NextResponse.json({ error: "internal_error", message: "Failed to compute tax impact." }, { status: 500 });
+  }
 
-    if (persist) {
+  let persisted = false;
+  if (persist) {
+    // Persistence is a side effect for later reporting, not the thing the
+    // customer paid for. A storage hiccup here must never turn an already-
+    // paid, successfully-computed result into a 500 — log it and move on.
+    try {
       const store = getStore();
       const existing = await store.getTransactions(walletAddress);
       const byHash = new Map(existing.map((t) => [t.hash, t]));
       for (const tx of result.classified) byHash.set(tx.hash, tx);
       await store.saveTransactions(walletAddress, Array.from(byHash.values()));
+      persisted = true;
+    } catch (err) {
+      logEvent({ level: "error", event: "tax_simulate_persist_error", agentId, walletAddress, message: err instanceof Error ? err.message : String(err) });
     }
-
-    logEvent({
-      level: "info",
-      event: "tax_simulate_completed",
-      agentId,
-      walletAddress,
-      transactionCount: result.transactionCount,
-      estimatedTax: result.estimatedTax,
-      settlementTxHash: gate.settlementTxHash,
-      latencyMs: Date.now() - start,
-    });
-
-    return NextResponse.json({
-      ok: true,
-      agentId,
-      settlementTxHash: gate.settlementTxHash,
-      estimatedTax: result.estimatedTax,
-      realizedGain: result.realizedGain,
-      reportHash: result.reportHash,
-      transactionCount: result.transactionCount,
-      impact: result.impact,
-      generatedAt: new Date().toISOString(),
-    });
-  } catch (err) {
-    logEvent({ level: "error", event: "tax_simulate_error", agentId, message: err instanceof Error ? err.message : String(err) });
-    return NextResponse.json({ error: "internal_error", message: "Failed to compute tax impact." }, { status: 500 });
   }
+
+  logEvent({
+    level: "info",
+    event: "tax_simulate_completed",
+    agentId,
+    walletAddress,
+    transactionCount: result.transactionCount,
+    estimatedTax: result.estimatedTax,
+    persisted,
+    settlementTxHash: gate.settlementTxHash,
+    latencyMs: Date.now() - start,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    agentId,
+    settlementTxHash: gate.settlementTxHash,
+    estimatedTax: result.estimatedTax,
+    realizedGain: result.realizedGain,
+    reportHash: result.reportHash,
+    transactionCount: result.transactionCount,
+    impact: result.impact,
+    persisted,
+    generatedAt: new Date().toISOString(),
+  });
 }
 
+/**
+ * GET on the registered resource path must ALSO return the x402 challenge
+ * — an OKX.AI compliance check hit this with an unauthenticated GET and
+ * got back the old unprotected discovery response (200), which is not a
+ * valid x402 endpoint by their definition. Service info now lives at
+ * /docs instead; this path is payment-gated regardless of HTTP method.
+ */
 export async function GET(req: NextRequest) {
   const priceUsd = process.env.X402_PRICE_SIMULATE ?? "0.15";
   const gate = await requirePayment(req, "/api/tax/simulate", priceUsd);

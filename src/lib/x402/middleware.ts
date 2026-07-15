@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { mockOkxPaymentAdapter } from "../chain/xlayer";
 import { isFacilitatorConfigured, verifyWithFacilitator, settleWithFacilitator } from "./facilitator";
 import { toAtomicUnits } from "./units";
+import { resolveToken } from "./tokens";
 import { logEvent } from "../logging";
 
 /**
@@ -10,17 +11,20 @@ import { logEvent } from "../logging";
  * okx/onchainos-skills (okx-agent-payments-protocol, v4.2.3) — installed
  * and read directly rather than assumed from the generic public x402 docs.
  *
- * Two real corrections that came from reading the actual skill file:
+ * Real corrections found along the way, each verified against either the
+ * skill file or OKX's own live compliance checker on ASP #5534:
  *   1. The v2 challenge is a base64-encoded JSON `PAYMENT-REQUIRED`
- *      *response header*, not just a JSON body (the JSON body remains as a
- *      v1-legacy/human-debuggable fallback — real OKX agents check the
- *      header first, per their own Step A2 priority order).
- *   2. Amounts are atomic/minimal units (e.g. "150000" for 0.15 of a
- *      6-decimal token), not decimal strings — real agents decode
- *      `option.amount` and convert using token decimals for display.
- *   3. The client's payment-proof header is `PAYMENT-SIGNATURE` for this
- *      v2 accepts-based flow; `X-PAYMENT` is the v1-legacy header name.
- *      We accept either, preferring PAYMENT-SIGNATURE.
+ *      *response header*, not just a JSON body (JSON body kept as a
+ *      v1-legacy/human-debuggable fallback).
+ *   2. Amounts are atomic/minimal units, not decimal strings.
+ *   3. The client's payment-proof header is `PAYMENT-SIGNATURE` for v2;
+ *      `X-PAYMENT` is the v1-legacy name. We accept either.
+ *   4. `asset` must be a real ERC-20 contract address, not a bare symbol
+ *      like "USDT" — every real x402 implementation does this (Coinbase's
+ *      own spec, Base, Avalanche, Exa, CoinMarketCap all confirmed). A
+ *      bare symbol is exactly why OKX's checker couldn't resolve decimals.
+ *      Resolved via src/lib/x402/tokens.ts; also included directly in
+ *      `extra.decimals` so nothing needs an external lookup at all.
  *
  * Two runtime modes, chosen automatically based on env:
  *   - REAL mode: X402_FACILITATOR_URL is set → payments are verified and
@@ -31,17 +35,16 @@ import { logEvent } from "../logging";
  *     ASP. A warning is logged on every call made in this mode.
  */
 
-const ASSET_DECIMALS = Number(process.env.X402_ASSET_DECIMALS ?? 6); // 6 is correct for USDT/USDC on most EVM chains
-
 export interface X402AcceptEntry {
   scheme: "exact";
   network: string;
-  asset: string;
+  asset: string; // real ERC-20 contract address, not a symbol
   payTo: string;
   amount: string; // atomic units — the field real OKX agents parse (option.amount)
   maxAmountRequired: string; // decimal string — kept for v1/back-compat and human debugging
   resource: string;
   description: string;
+  extra?: { name: string; symbol: string; decimals: number };
 }
 
 export interface X402Requirements {
@@ -50,18 +53,35 @@ export interface X402Requirements {
 }
 
 export function buildRequirements(resource: string, priceUsd: string): X402Requirements {
+  const network = process.env.X402_NETWORK ?? "x-layer";
+  const symbol = process.env.X402_ASSET ?? "USDT";
+  const token = resolveToken(network, symbol);
+
+  if (!token) {
+    logEvent({
+      level: "warn",
+      event: "x402_unresolved_token",
+      network,
+      symbol,
+      message: "No verified contract address for this network/asset — falling back to the bare symbol, which is NOT spec-compliant and will fail compliance checks. Add a verified entry to src/lib/x402/tokens.ts.",
+    });
+  }
+
+  const decimals = token?.decimals ?? Number(process.env.X402_ASSET_DECIMALS ?? 6);
+
   return {
     x402Version: 1,
     accepts: [
       {
         scheme: "exact",
-        network: process.env.X402_NETWORK ?? "x-layer",
-        asset: process.env.X402_ASSET ?? "USDT",
+        network,
+        asset: token?.address ?? symbol,
         payTo: process.env.X402_RECEIVING_ADDRESS ?? "0x0000000000000000000000000000000000000000",
-        amount: toAtomicUnits(priceUsd, ASSET_DECIMALS),
+        amount: toAtomicUnits(priceUsd, decimals),
         maxAmountRequired: priceUsd,
         resource,
         description: "TaxForge ASP — pay-per-call agent tax intelligence",
+        extra: token ? { name: token.name, symbol, decimals: token.decimals } : undefined,
       },
     ],
   };
