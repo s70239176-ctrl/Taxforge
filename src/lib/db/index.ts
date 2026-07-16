@@ -82,25 +82,50 @@ class UpstashRedisStore implements TaxForgeStore {
     return `taxforge:reports:${wallet.toLowerCase()}`;
   }
 
+  // Every method below is wrapped so a Redis/network hiccup can never crash
+  // a caller — this bit us twice already (a rate-limit call and a classify
+  // call both took down their whole request on an Upstash error before this
+  // was centralized here). Reads fail to an empty result (same as a cache
+  // miss, which every caller already handles); writes fail silently after
+  // logging, since a lost persist should never invalidate work already done.
+
   async getTransactions(walletAddress: string): Promise<ClassifiedTransaction[]> {
-    const data = await this.redis.get<ClassifiedTransaction[]>(this.txKey(walletAddress));
-    return data ?? [];
+    try {
+      const data = await this.redis.get<ClassifiedTransaction[]>(this.txKey(walletAddress));
+      return data ?? [];
+    } catch (err) {
+      logEvent({ level: "error", event: "upstash_read_error", op: "getTransactions", wallet: walletAddress, message: err instanceof Error ? err.message : String(err) });
+      return [];
+    }
   }
 
   async saveTransactions(walletAddress: string, txs: ClassifiedTransaction[]): Promise<void> {
-    await this.redis.set(this.txKey(walletAddress), txs);
+    try {
+      await this.redis.set(this.txKey(walletAddress), txs);
+    } catch (err) {
+      logEvent({ level: "error", event: "upstash_write_error", op: "saveTransactions", wallet: walletAddress, message: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   async getReports(walletAddress: string): Promise<TaxReport[]> {
-    const data = await this.redis.get<TaxReport[]>(this.reportsKey(walletAddress));
-    return data ?? [];
+    try {
+      const data = await this.redis.get<TaxReport[]>(this.reportsKey(walletAddress));
+      return data ?? [];
+    } catch (err) {
+      logEvent({ level: "error", event: "upstash_read_error", op: "getReports", wallet: walletAddress, message: err instanceof Error ? err.message : String(err) });
+      return [];
+    }
   }
 
   async saveReport(report: TaxReport): Promise<void> {
-    const key = this.reportsKey(report.walletAddress);
-    const existing = (await this.redis.get<TaxReport[]>(key)) ?? [];
-    const next = [...existing.filter((r) => r.id !== report.id), report];
-    await this.redis.set(key, next);
+    try {
+      const key = this.reportsKey(report.walletAddress);
+      const existing = (await this.redis.get<TaxReport[]>(key)) ?? [];
+      const next = [...existing.filter((r) => r.id !== report.id), report];
+      await this.redis.set(key, next);
+    } catch (err) {
+      logEvent({ level: "error", event: "upstash_write_error", op: "saveReport", wallet: report.walletAddress, message: err instanceof Error ? err.message : String(err) });
+    }
   }
 }
 
