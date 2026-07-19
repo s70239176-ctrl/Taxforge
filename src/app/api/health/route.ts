@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { mockOkxPaymentAdapter } from "@/lib/chain/xlayer";
-import { isFacilitatorConfigured } from "@/lib/x402/facilitator";
+import { isRealPaymentConfigured } from "@/lib/x402/okx-real";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   const reputation = await mockOkxPaymentAdapter.getAspReputation(process.env.OKX_ASP_ID || "taxforge");
-  const paymentMode = isFacilitatorConfigured() ? "live" : "demo";
+  const paymentMode = isRealPaymentConfigured() ? "live" : "demo";
 
   return NextResponse.json({
     status: "ok",
