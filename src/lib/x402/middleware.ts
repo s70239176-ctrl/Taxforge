@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { mockOkxPaymentAdapter } from "../chain/xlayer";
 import { isRealPaymentConfigured, buildRealChallenge, verifyRealPayment, settleRealPayment } from "./okx-real";
+import { recordCall } from "./call-log";
 import { toAtomicUnits } from "./units";
 import { resolveToken, X_LAYER_CAIP2 } from "./tokens";
 import { logEvent } from "../logging";
@@ -153,6 +154,12 @@ export async function requirePayment(
         ),
       };
     }
+    recordCall({
+      agentId: req.headers.get("X-Agent-Id") ?? "anonymous",
+      resource,
+      priceUsd,
+      settlementTxHash: settlement.txHash,
+    }).catch(() => {}); // best-effort, never block the response on this
     return { ok: true, settlementTxHash: settlement.txHash };
   }
 

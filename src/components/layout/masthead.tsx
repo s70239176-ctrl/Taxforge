@@ -1,16 +1,38 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { ThemeToggle } from "./theme-toggle";
 
-const TICKER_ITEMS = [
-  "X LAYER  BLOCK #4,812,940  ·  12s",
-  "ETHEREUM  BLOCK #21,004,118  ·  11s",
-  "ARBITRUM  BLOCK #298,441,220  ·  0.3s",
-  "BASE  BLOCK #24,110,553  ·  2s",
-  "A2MCP CALLS SERVED  18,204",
-  "ASP UPTIME  99.97%",
-];
+interface HealthData {
+  paymentMode: "live" | "demo";
+  storageBackend: "upstash-redis" | "json-file";
+  reputation: { callsServed: number; disputesRaised: number; uptimePct: number };
+}
 
 export function Masthead() {
-  const items = [...TICKER_ITEMS, ...TICKER_ITEMS];
+  const [health, setHealth] = useState<HealthData | null>(null);
+
+  useEffect(() => {
+    fetch("/health")
+      .then((r) => r.json())
+      .then((data) => setHealth(data))
+      .catch(() => setHealth(null));
+  }, []);
+
+  const isLive = health?.paymentMode === "live";
+
+  const tickerItems = health
+    ? [
+        `PAYMENT VERIFICATION  ${health.paymentMode === "live" ? "LIVE VIA OKX PAYMENT SDK" : "DEMO MODE — NOT VERIFYING REAL PAYMENTS"}`,
+        `STORAGE  ${health.storageBackend === "upstash-redis" ? "PERSISTENT (UPSTASH REDIS)" : "LOCAL FILE (NOT PRODUCTION-SAFE)"}`,
+        `A2MCP CALLS SERVED  ${health.reputation.callsServed.toLocaleString()}`,
+        `ASP UPTIME  ${health.reputation.uptimePct}%`,
+        `MCP PROTOCOL  /api/mcp — INITIALIZE / TOOLS-LIST / TOOLS-CALL`,
+      ]
+    : ["CONNECTING TO /health …"];
+
+  const items = [...tickerItems, ...tickerItems];
+
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-void/95 backdrop-blur">
       <div className="mx-auto flex max-w-[1440px] items-center gap-4 px-4 py-2.5 md:px-6">
@@ -18,9 +40,19 @@ export function Masthead() {
           <span className="font-display text-[15px] font-semibold tracking-tight text-ink">
             TAX<span className="text-gain">FORGE</span>
           </span>
-          <span className="hidden items-center gap-1 rounded-sm border border-line px-1.5 py-0.5 text-2xs font-mono text-ink-muted sm:flex">
-            <span className="live-dot animate-blink" />
-            AGENT ECONOMY · LIVE
+          <span
+            className={`hidden items-center gap-1 rounded-sm border px-1.5 py-0.5 text-2xs font-mono sm:flex ${
+              health === null
+                ? "border-line text-ink-faint"
+                : isLive
+                  ? "border-gain/30 text-gain bg-gain-dim"
+                  : "border-pending/30 text-pending bg-pending-dim"
+            }`}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${health === null ? "bg-ink-faint" : isLive ? "live-dot animate-blink" : "bg-pending"}`}
+            />
+            {health === null ? "CONNECTING…" : isLive ? "PAYMENTS · LIVE" : "PAYMENTS · DEMO MODE"}
           </span>
         </div>
 

@@ -24,7 +24,7 @@ const CURL_402 = `curl -X POST https://taxforge.example.com/api/tax/simulate \\
 #   "accepts": [{
 #     "scheme": "exact",
 #     "network": "x-layer",
-#     "asset": "USDT",
+#     "asset": "0x779ded0c9e1022225f8e0630b35a9b54be713736",
 #     "payTo": "0xTAXFORGE_TREASURY...",
 #     "maxAmountRequired": "0.15",
 #     "resource": "/api/tax/simulate",
@@ -79,7 +79,7 @@ export default function DocsPage() {
       </div>
 
       <Panel>
-        <PanelHeader eyebrow="Pricing" title="Pay-per-call rates (X Layer, USDT)" />
+        <PanelHeader eyebrow="Pricing" title="Pay-per-call rates (X Layer, USD₮0)" />
         <div className="grid grid-cols-1 divide-y divide-line-soft sm:grid-cols-3 sm:divide-x sm:divide-y-0">
           <PriceRow endpoint="POST /api/tax/simulate" desc="Batch tax-impact simulation + report hash" price="$0.15" />
           <PriceRow endpoint="POST /api/a2mcp/report" desc="Full report generation, X Layer-anchored" price="$2.50" />
