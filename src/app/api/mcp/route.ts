@@ -14,6 +14,7 @@ import { buildReport, anchorReport } from "@/lib/reports/generate";
 import { computePortfolioImpact } from "@/lib/reports/portfolio-impact";
 import { getStore } from "@/lib/db";
 import { logEvent } from "@/lib/logging";
+import { requirePayment } from "@/lib/x402/middleware";
 
 export const runtime = "nodejs";
 
@@ -27,13 +28,15 @@ export const runtime = "nodejs";
  * failure - OKX's platform was trying to speak MCP to an endpoint that only
  * understood custom REST JSON.
  *
- * Tools currently exposed here are UNPAID - anyone who can reach this
- * endpoint can call them. Payment-gating individual MCP tool calls is a
- * distinct integration (OKX ships a dedicated @okxweb3/x402-mcp package for
- * exactly this) and needs its own pass once this protocol layer is
- * confirmed working. The existing paid REST endpoints (/api/tax/simulate,
- * /api/a2mcp/report, /api/a2mcp/classify) remain the metered surface in the
- * meantime.
+ * Tool calls are payment-gated per-tool via requirePayment() (the same
+ * real OKX Payment SDK integration used by the REST endpoints) - see
+ * TOOL_PRICES and handle() below. initialize/tools/list stay free so a
+ * client can discover what's available before deciding whether to pay,
+ * matching MCP's discovery-first convention; only tools/call is gated.
+ * There's no dedicated OKX MCP payment package (checked; doesn't exist) -
+ * this reuses the transport-agnostic x402ResourceServer methods directly,
+ * following the same "intercept before the tool executes" pattern used by
+ * other x402-MCP integrations in the wider ecosystem (e.g. @civic/x402-mcp).
  *
  * A new McpServer + transport is constructed per request rather than
  * reused across requests - correct for a stateless serverless environment
@@ -179,7 +182,33 @@ function buildServer(): McpServer {
   return server;
 }
 
+/** Maps MCP tool name to its price, mirroring the equivalent REST endpoint's pricing. */
+const TOOL_PRICES: Record<string, string> = {
+  simulate_tax: process.env.X402_PRICE_SIMULATE ?? "0.15",
+  classify_transaction: process.env.X402_PRICE_CLASSIFY ?? "0.05",
+  generate_report: process.env.X402_PRICE_REPORT ?? "2.50",
+};
+
 async function handle(req: NextRequest): Promise<Response> {
+  // Only POST carries JSON-RPC method calls worth gating; GET (SSE resume)
+  // and DELETE (session termination) pass straight through. Clone the
+  // request to peek at the body without consuming the stream the MCP
+  // transport still needs to read afterward.
+  if (req.method === "POST") {
+    try {
+      const body = await req.clone().json();
+      const toolName = body?.method === "tools/call" ? body?.params?.name : undefined;
+      const price = toolName ? TOOL_PRICES[toolName] : undefined;
+      if (price) {
+        const gate = await requirePayment(req, `/api/mcp#${toolName}`, price);
+        if (!gate.ok) return gate.response!;
+      }
+    } catch {
+      // Not JSON, not a tools/call, or malformed - let the MCP transport
+      // itself handle or reject it normally rather than blocking here.
+    }
+  }
+
   const server = buildServer();
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined, // stateless mode - correct for serverless, no cross-request session state
